@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Control QR Móvil</title>
+<style>
+body{margin:0;background:#0d0f12;color:#fff;font-family:Arial,sans-serif}
+main{max-width:720px;margin:auto;padding:18px}
+.card{background:#171a1f;border:1px solid #343943;border-radius:18px;padding:14px;margin:14px 0}
+video{width:100%;height:48vh;min-height:280px;max-height:520px;object-fit:cover;background:#000;border-radius:14px}
+button,input{font:inherit}
+button{border:0;border-radius:12px;padding:14px 17px;font-weight:800;margin:5px}
+.primary{background:#d9b44a;color:#111}.secondary{background:#30353e;color:#fff}
+.result{min-height:220px;border:2px dashed #4d535e;border-radius:16px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+.ok{border-color:#19bf73;background:#123326}.bad{border-color:#db5050;background:#351515}
+.word{font-size:54px;font-weight:900}.oktext{color:#48e89a}.badtext{color:#ff7f7f}
+.code{font-family:monospace;color:#aab1bc;margin-top:14px;word-break:break-word}
+input{width:100%;padding:13px;border-radius:12px;border:1px solid #444b57;background:#0d0f12;color:#fff}
+.note{color:#aab1bc;font-size:14px}
+.status{display:inline-block;padding:5px 9px;border-radius:999px;background:#292e36;color:#ddd;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>Control de ingreso QR</h1>
+<p class="note">Cumpleaños de Byron Velásquez · 05/09/2026</p>
+
+<section class="card">
+<div class="status" id="secureState">Comprobando conexión segura…</div>
+<video id="video" playsinline muted></video>
+<button class="primary" id="start">Abrir cámara</button>
+<button class="secondary" id="stop">Cerrar cámara</button>
+<p class="note">Abrir desde HTTPS. Recomendado: Chrome actualizado en Android.</p>
+</section>
+
+<section class="card">
+<div id="result" class="result">
+<div><div class="word">—</div><div>Esperando código QR</div></div>
+</div>
+</section>
+
+<section class="card">
+<input id="manual" placeholder="Evento-05092026-034">
+<button class="secondary" id="validate">Validar manualmente</button>
+</section>
+
+<script>
+const v=document.getElementById('video');
+const r=document.getElementById('result');
+const secureState=document.getElementById('secureState');
+let stream=null,detector=null,running=false,last='',lastAt=0;
+
+secureState.textContent=window.isSecureContext?'Conexión segura: cámara disponible':'No es HTTPS: la cámara puede estar bloqueada';
+
+function sound(ok){
+ const A=window.AudioContext||window.webkitAudioContext;if(!A)return;
+ const c=new A(),o=c.createOscillator(),g=c.createGain();
+ o.connect(g);g.connect(c.destination);o.frequency.value=ok?1050:190;g.gain.value=.2;o.start();o.stop(c.currentTime+(ok?.3:.7));
+}
+function validCode(raw){return /^Evento-05092026-\d{3}$/i.test((raw||'').trim())}
+function show(raw){
+ raw=(raw||'').trim();if(!raw)return;
+ const now=Date.now();if(raw===last&&now-lastAt<1800)return;last=raw;lastAt=now;
+ if(validCode(raw)){
+   r.className='result ok';r.innerHTML='<div><div class="word oktext">APROBADA</div><div class="code">'+raw+'</div></div>';
+   if(navigator.vibrate)navigator.vibrate(90);sound(true);
+ }else{
+   r.className='result bad';r.innerHTML='<div><div class="word badtext">NO APROBADA</div><div class="code">'+raw+'</div></div>';
+   if(navigator.vibrate)navigator.vibrate([120,70,120]);sound(false);
+ }
+}
+async function startCamera(){
+ if(!window.isSecureContext){alert('La cámara requiere HTTPS.');return}
+ if(!navigator.mediaDevices?.getUserMedia){alert('Este navegador no permite acceso a cámara.');return}
+ if(!('BarcodeDetector' in window)){alert('Prueba con Chrome actualizado en Android.');return}
+ try{
+   detector=new BarcodeDetector({formats:['qr_code']});
+   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+   v.srcObject=stream;await v.play();running=true;scanLoop();
+ }catch(e){alert('No fue posible abrir la cámara. Revisa el permiso de cámara para este sitio.')}
+}
+async function scanLoop(){
+ if(!running)return;
+ try{if(v.readyState>=2){const found=await detector.detect(v);if(found.length)show(found[0].rawValue)}}catch(e){}
+ requestAnimationFrame(scanLoop);
+}
+function stopCamera(){running=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;v.srcObject=null}
+document.getElementById('start').onclick=startCamera;
+document.getElementById('stop').onclick=stopCamera;
+document.getElementById('validate').onclick=()=>show(document.getElementById('manual').value);
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
+</script>
+</main>
+</body>
+</html>
