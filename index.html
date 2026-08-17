@@ -9,16 +9,18 @@
 body{margin:0;background:#0d0f12;color:#fff;font-family:Arial,sans-serif}
 main{max-width:720px;margin:auto;padding:18px}
 .card{background:#171a1f;border:1px solid #343943;border-radius:18px;padding:14px;margin:14px 0}
-video{width:100%;height:48vh;min-height:280px;max-height:520px;object-fit:cover;background:#000;border-radius:14px}
+video{width:100%;height:46vh;min-height:280px;max-height:500px;object-fit:cover;background:#000;border-radius:14px}
 button,input{font:inherit}
-button{border:0;border-radius:12px;padding:14px 17px;font-weight:800;margin:5px}
+button{border:0;border-radius:12px;padding:14px 17px;font-weight:800;margin:5px;cursor:pointer}
 .primary{background:#d9b44a;color:#111}.secondary{background:#30353e;color:#fff}
 .result{min-height:220px;border:2px dashed #4d535e;border-radius:16px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
 .ok{border-color:#19bf73;background:#123326}.bad{border-color:#db5050;background:#351515}
-.word{font-size:54px;font-weight:900}.oktext{color:#48e89a}.badtext{color:#ff7f7f}
-.code{font-family:monospace;color:#aab1bc;margin-top:14px;word-break:break-word}
+.word{font-size:52px;font-weight:900}.oktext{color:#48e89a}.badtext{color:#ff7f7f}
+.code{font-family:monospace;color:#d8dee9;margin-top:12px;word-break:break-word}
+.reason{color:#ffb0b0;margin-top:10px;font-size:15px}
 .note{color:#aab1bc;font-size:14px}
 input{width:100%;padding:13px;border-radius:12px;border:1px solid #444b57;background:#0d0f12;color:#fff}
+hr{border:0;border-top:1px solid #343943;margin:16px 0}
 </style>
 </head>
 <body>
@@ -39,85 +41,152 @@ input{width:100%;padding:13px;border-radius:12px;border:1px solid #444b57;backgr
 </section>
 
 <section class="card">
-<input id="manual" placeholder="Evento-05092026-034">
-<button class="secondary" id="validate">Validar manualmente</button>
-<p class="note">Acepta códigos simples y también códigos antiguos con información adicional, por ejemplo: Evento-05092026-034|personas=2</p>
+<label for="manual"><b>Ingreso manual</b></label>
+<input id="manual" autocomplete="off" placeholder="Escriba 034 o Evento-05092026-034">
+<button class="secondary" id="validate" type="button">APROBAR MANUALMENTE</button>
+<p class="note">Puede escribir solo el correlativo, por ejemplo <b>034</b>.</p>
+</section>
+
+<section class="card">
+<b>Diagnóstico</b>
+<div id="diag" class="code">Sin lectura todavía.</div>
 </section>
 
 <script>
 const v=document.getElementById('video');
 const r=document.getElementById('result');
-let stream=null,detector=null,running=false,last='',lastAt=0;
+const diag=document.getElementById('diag');
+const manual=document.getElementById('manual');
+
+let stream=null, detector=null, running=false, last='', lastAt=0;
 
 function sound(ok){
- const A=window.AudioContext||window.webkitAudioContext;if(!A)return;
- const c=new A(),o=c.createOscillator(),g=c.createGain();
- o.connect(g);g.connect(c.destination);
- o.frequency.value=ok?1050:190;g.gain.value=.2;o.start();o.stop(c.currentTime+(ok?.3:.7));
+  try{
+    const A=window.AudioContext||window.webkitAudioContext;
+    if(!A)return;
+    const c=new A(),o=c.createOscillator(),g=c.createGain();
+    o.connect(g);g.connect(c.destination);
+    o.frequency.value=ok?1050:190;
+    g.gain.setValueAtTime(.20,c.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001,c.currentTime+(ok?.35:.75));
+    o.start();o.stop(c.currentTime+(ok?.35:.75));
+  }catch(e){}
 }
 
-function normalize(raw){
- return (raw||'').trim().replace(/\s+/g,'');
+function normalize(s){
+  return (s||'')
+    .replace(/[‐‑‒–—−]/g,'-')   // distintos tipos de guion
+    .replace(/\u00A0/g,' ')
+    .trim();
 }
 
-function validCode(raw){
- const s=normalize(raw);
- // Acepta:
- // Evento-05092026-034
- // Evento-05092026-034|personas=2
- // cualquier texto adicional después del correlativo
- return /^Evento-05092026-\d{3}(?:.*)?$/i.test(s);
+function extractEventCode(raw){
+  const s=normalize(raw);
+
+  // Busca el código EN CUALQUIER PARTE del contenido leído,
+  // incluso si el QR contiene toda la información de la invitación.
+  let m=s.match(/Evento\s*-\s*05092026\s*-\s*(\d{1,3})/i);
+  if(m){
+    const n=String(parseInt(m[1],10)).padStart(3,'0');
+    return 'Evento-05092026-'+n;
+  }
+
+  // También acepta solo el correlativo escrito manualmente: 1 ... 999
+  if(/^\d{1,3}$/.test(s)){
+    const n=String(parseInt(s,10)).padStart(3,'0');
+    return 'Evento-05092026-'+n;
+  }
+
+  return null;
 }
 
-function show(raw){
- raw=(raw||'').trim(); if(!raw)return;
- const now=Date.now(); if(raw===last&&now-lastAt<1800)return;
- last=raw; lastAt=now;
+function approve(raw, source){
+  raw=(raw||'').trim();
+  if(!raw){
+    r.className='result bad';
+    r.innerHTML='<div><div class="word badtext">NO APROBADA</div><div class="reason">No se recibió ningún código.</div></div>';
+    return;
+  }
 
- if(validCode(raw)){
-   r.className='result ok';
-   r.innerHTML='<div><div class="word oktext">APROBADA</div><div class="code">'+raw+'</div></div>';
-   if(navigator.vibrate)navigator.vibrate(90);
-   sound(true);
- }else{
-   r.className='result bad';
-   r.innerHTML='<div><div class="word badtext">NO APROBADA</div><div class="note">Contenido leído:</div><div class="code">'+raw+'</div></div>';
-   if(navigator.vibrate)navigator.vibrate([120,70,120]);
-   sound(false);
- }
+  const code=extractEventCode(raw);
+  diag.textContent='Contenido recibido ('+source+'): '+raw;
+
+  if(code){
+    r.className='result ok';
+    r.innerHTML='<div><div class="word oktext">APROBADA</div><div class="code">'+code+'</div></div>';
+    if(navigator.vibrate)navigator.vibrate(90);
+    sound(true);
+  }else{
+    r.className='result bad';
+    r.innerHTML='<div><div class="word badtext">NO APROBADA</div><div class="reason">No encontré un código del tipo Evento-05092026-XXX dentro del QR.</div><div class="code">'+raw+'</div></div>';
+    if(navigator.vibrate)navigator.vibrate([120,70,120]);
+    sound(false);
+  }
+}
+
+function processScan(raw){
+  const now=Date.now();
+  if(raw===last && now-lastAt<1800)return;
+  last=raw;lastAt=now;
+  approve(raw,'QR');
 }
 
 async function startCamera(){
- if(!window.isSecureContext){alert('La cámara requiere HTTPS.');return}
- if(!navigator.mediaDevices?.getUserMedia){alert('Este navegador no permite acceso a cámara.');return}
- if(!('BarcodeDetector' in window)){alert('Use Chrome actualizado en Android.');return}
- try{
-   detector=new BarcodeDetector({formats:['qr_code']});
-   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-   v.srcObject=stream;await v.play();running=true;scanLoop();
- }catch(e){alert('No fue posible abrir la cámara. Revisa el permiso de cámara.')}
+  if(!window.isSecureContext){alert('La cámara requiere HTTPS.');return;}
+  if(!navigator.mediaDevices?.getUserMedia){alert('Este navegador no permite acceso a cámara.');return;}
+  if(!('BarcodeDetector' in window)){alert('Use Chrome actualizado en Android.');return;}
+  try{
+    detector=new BarcodeDetector({formats:['qr_code']});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    v.srcObject=stream;
+    await v.play();
+    running=true;
+    scanLoop();
+  }catch(e){
+    alert('No fue posible abrir la cámara. Revise el permiso de cámara.');
+  }
 }
 
 async function scanLoop(){
- if(!running)return;
- try{
-   if(v.readyState>=2){
-     const found=await detector.detect(v);
-     if(found.length)show(found[0].rawValue);
-   }
- }catch(e){}
- requestAnimationFrame(scanLoop);
+  if(!running)return;
+  try{
+    if(v.readyState>=2){
+      const found=await detector.detect(v);
+      if(found.length)processScan(found[0].rawValue);
+    }
+  }catch(e){}
+  requestAnimationFrame(scanLoop);
 }
 
 function stopCamera(){
- running=false;
- if(stream)stream.getTracks().forEach(t=>t.stop());
- stream=null;v.srcObject=null;
+  running=false;
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=null;
+  v.srcObject=null;
 }
 
-document.getElementById('start').onclick=startCamera;
-document.getElementById('stop').onclick=stopCamera;
-document.getElementById('validate').onclick=()=>show(document.getElementById('manual').value);
+document.getElementById('start').addEventListener('click',startCamera);
+document.getElementById('stop').addEventListener('click',stopCamera);
+
+document.getElementById('validate').addEventListener('click',function(){
+  approve(manual.value,'manual');
+});
+
+manual.addEventListener('keydown',function(e){
+  if(e.key==='Enter'){
+    e.preventDefault();
+    approve(manual.value,'manual');
+  }
+});
+
+// Elimina el service worker viejo para evitar que el móvil siga cargando
+// una versión anterior almacenada en caché.
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(reg=>reg.unregister()));
+}
+if('caches' in window){
+  caches.keys().then(keys=>keys.forEach(k=>caches.delete(k)));
+}
 </script>
 </main>
 </body>
